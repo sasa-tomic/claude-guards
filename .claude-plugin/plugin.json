@@ -1,5 +1,5 @@
 {
   "name": "guards",
   "license": "MIT",
-  "description": "PreToolUse guards: refuse detached Bash jobs (nohup/setsid/disown) and subagent launches without an explicit model"
+  "description": "Guards: refuse detached Bash jobs and subagents without a model; keep subagents moving with a stall watchdog"
 }

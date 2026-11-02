@@ -1,0 +1,7 @@
+[
+  {
+    "name": "subagent-watchdog",
+    "command": "d=$(mktemp -d) && while sh \"${CLAUDE_PLUGIN_ROOT}/monitors/subagents.sh\" \"$d\"; do sleep 30; done",
+    "description": "subagent watchdog: stalled tool calls, long silent model turns, progress digests"
+  }
+]

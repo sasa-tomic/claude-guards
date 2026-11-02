@@ -3,6 +3,12 @@
     "PreToolUse": [
       { "matcher": "^Bash$", "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/refuse-detached-bash.sh\"" }] },
       { "matcher": "^Agent$", "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/require-subagent-model.sh\"" }] }
+    ],
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/context.sh\" SessionStart \"${CLAUDE_PLUGIN_ROOT}/context/orchestrator.md\"" }] }
+    ],
+    "SubagentStart": [
+      { "hooks": [{ "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/context.sh\" SubagentStart \"${CLAUDE_PLUGIN_ROOT}/context/subagent.md\"" }] }
     ]
   }
 }
