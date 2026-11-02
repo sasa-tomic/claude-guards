@@ -2,8 +2,9 @@
 # One pass of the subagent watchdog (monitors/monitors.json loops it): report each background subagent of this Claude Code
 # process that stalls, so the main agent corrects or stops it within minutes instead of finding a 2h stall by chance.
 # Each stdout line reaches the main agent as a notification; <statedir> remembers what was already reported.
-# Discovery: the claude process ($CLAUDE_PID) holds its task-output dir open; every background subagent has an
-# <agentId>.output symlink there, and its transcript is ~/.claude/projects/**/agent-<agentId>.jsonl.
+# Discovery: the claude process ($CLAUDE_PID) holds its task-output dir open once its first background task starts
+# (none before: nothing to watch yet); every background subagent of any depth has an <agentId>.output symlink there,
+# and its transcript is ~/.claude/projects/**/agent-<agentId>.jsonl.
 # stall: seconds a tool call or a silent model turn may run before it is reported (p99 of 4.7k measured gaps: ~180s).
 # digest: seconds between progress summaries per subagent active within that window.
 stall=180 digest=600
@@ -12,7 +13,7 @@ die() { echo "subagent watchdog stopped: $*"; exit 1; }
 [ -n "$CLAUDE_PID" ] || die "CLAUDE_PID is unset; it must run as a Claude Code plugin monitor"
 kill -0 "$CLAUDE_PID" 2>/dev/null || die "claude process $CLAUDE_PID is gone"
 tasks=$(for fd in /proc/"$CLAUDE_PID"/fd/*; do readlink "$fd"; done | grep -m1 '/tasks$')
-[ -n "$tasks" ] || die "claude process $CLAUDE_PID holds no task-output dir open (/proc/$CLAUDE_PID/fd)"
+[ -n "$tasks" ] || exit 0
 once() { # key message: print a report line the first time key is seen for subagent $id
   [ -e "$state/$id.$1" ] && return
   echo "subagent $id${who:+ ($who)}: $2"
@@ -25,9 +26,24 @@ for out in "$tasks"/a*.output; do
   log=$(find "$HOME/.claude/projects" -name "agent-$id.jsonl" -print -quit)
   [ -n "$log" ] || { once missing "transcript agent-$id.jsonl not found under ~/.claude/projects"; continue; }
   meta=${log%.jsonl}.meta.json
-  m=$(jq -r 'if .finished or .stoppedByUser then "done" else "\"\(.description)\", \(.model // "inherited model")" end' "$meta" 2>&1) ||
+  m=$(jq -r 'if .finished or .stoppedByUser then "finished" else "\"\(.description)\", \(.model // "inherited model")\(.parentAgentId | if . then ", spawned by subagent \(.)" else "" end)" end' "$meta" 2>&1) ||
     { once unreadable "metadata $meta unreadable: $m"; continue; }
-  [ "$m" = done ] && { touch "$state/$id.done"; continue; }
+  if [ "$m" = finished ]; then # it is done only once its own background tasks end: until then they keep it alive
+    : "${running=$(for c in $(pgrep -P "$CLAUDE_PID"); do for fd in /proc/"$c"/fd/*; do readlink "$fd"; done; done 2>/dev/null)}" # a background task is a child of claude holding its .output open; 2>/dev/null: a child exiting mid-scan
+    bgs=$(jq -r -s '(map(.message.content | arrays | .[] | select(.type == "tool_use") | {key: .id, value: .input.command})
+      | from_entries) as $cmd | .[] | (.toolUseResult | objects | .backgroundTaskId // empty) as $b
+      | "\($b)\t\($cmd[.message.content[0].tool_use_id] // "" | tostring | gsub("\\s+"; " ")[0:150])"' "$log" 2>&1) ||
+      { once unreadable "transcript $log unreadable: $bgs"; continue; }
+    held=0
+    while IFS="$(printf '\t')" read -r b c; do
+      printf '%s\n' "$running" | grep -qxF "$tasks/$b.output" || continue
+      held=1; once "held-$b" "finished its work but its background task $b still runs and keeps it alive: $c; transcript $log"
+    done <<EOT
+$bgs
+EOT
+    [ $held = 1 ] || touch "$state/$id.done"
+    continue
+  fi
   who=$m
   report=$(jq -r -s --argjson now "$(date +%s)" --argjson stall $stall --argjson digest $digest '
     def ts: .timestamp[0:19] + "Z" | fromdate;

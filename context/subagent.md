@@ -4,3 +4,4 @@ Velocity (claude-guards): the orchestrator watches your transcript and stops you
 - Test narrowly: run the tests that cover your change; a full suite at most once, at the end, when the brief requires it.
 - Parallelise: independent tool calls in one turn, multi-process/multi-thread tools (`pytest -n`, `make -j`, `xargs -P`), chunked or multi-connection transfers.
 - Wait on a condition (`until <done>; do sleep 5; done`), never a fixed long sleep.
+- Before your final report, stop every background task you started (a server, a watcher): a running one keeps you alive after you report.
