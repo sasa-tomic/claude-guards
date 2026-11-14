@@ -1,5 +1,5 @@
 {
   "name": "guards",
   "license": "MIT",
-  "description": "Guards: refuse detached Bash jobs and subagents without a model; keep subagents moving with a stall watchdog"
+  "description": "Guards: refuse detached Bash jobs, self-matching pgrep and subagents without a model; keep subagents moving with a stall watchdog"
 }
