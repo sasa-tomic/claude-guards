@@ -1,11 +1,14 @@
 """Self-check for bash-guard.py: python3 hooks/bash-guard.test.py"""
 import json
+import os
 import pathlib
 import subprocess
 import sys
 import unittest
 
 HOOK = pathlib.Path(__file__).with_name("bash-guard.py")
+# systemd's default PATH: hooks of sessions started by a systemd unit get no ~/bin or ~/.local/bin
+SYSTEMD_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 
 class BashGuard(unittest.TestCase):
@@ -13,7 +16,8 @@ class BashGuard(unittest.TestCase):
         for command in cases:
             with self.subTest(command=command):
                 hook_input = json.dumps({"tool_input": {"command": command, "run_in_background": background}})
-                run = subprocess.run([sys.executable, "-I", HOOK], input=hook_input, text=True, capture_output=True)
+                run = subprocess.run([sys.executable, "-I", HOOK], input=hook_input, text=True, capture_output=True,
+                                     env={**os.environ, "PATH": SYSTEMD_PATH})
                 self.assertEqual(run.returncode, want, run.stderr)
                 self.assertIn(message, run.stderr)
 
@@ -44,6 +48,7 @@ class BashGuard(unittest.TestCase):
             "pkill --full job.py",
             "bash -c 'pgrep job -f'",
             "cat <<EOF\n$(pgrep -f job)\nEOF",
+            "pgrep -f '' \"\"",
         ])
 
     def test_allows_pgrep_that_cannot_match_its_own_shell(self):

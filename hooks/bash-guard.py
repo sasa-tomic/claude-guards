@@ -43,13 +43,14 @@ def parse(script):
 
 
 def word(node):
-    """The literal text of a shell word, or None when part of it is only known at run time."""
+    """The literal text of a shell word, or None when part of it is only known at run time.
+    shfmt 3.12 omits empty fields from its JSON: Value of '', Parts of "", Args of `x=1`."""
     text = []
     for p in node["Parts"]:
         if p["Type"] in ("Lit", "SglQuoted"):
-            text.append(p["Value"])
-        elif p["Type"] == "DblQuoted" and all(q["Type"] == "Lit" for q in p["Parts"]):
-            text.extend(q["Value"] for q in p["Parts"])
+            text.append(p.get("Value", ""))
+        elif p["Type"] == "DblQuoted" and all(q["Type"] == "Lit" for q in p.get("Parts", [])):
+            text.extend(q.get("Value", "") for q in p.get("Parts", []))
         else:
             return None
     return "".join(text)
@@ -109,7 +110,7 @@ def check(tree, background, refusals):
             shell = id(node)
         if node.get("Background"):
             jobs.append((shell, node["End"]["Offset"]))
-        if node.get("Type") == "CallExpr" and node["Args"]:
+        if node.get("Type") == "CallExpr" and node.get("Args"):
             args = [word(a) for a in node["Args"]]
             cmd = os.path.basename(args[0] or "")
             if cmd in ENDERS:
