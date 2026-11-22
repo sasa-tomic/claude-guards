@@ -67,10 +67,10 @@ bad_lines=$(awk -v n="$(nproc --all)" '/^limited: cpu:/ { if ($8 < n / 4) print 
 err=$(LIMITED_IDLE=3s "$L" -- sleep 60 2>&1 >/dev/null); rc=$?
 [[ $rc -eq 124 && $err == *"killed: idle:"* ]] && ok "LIMITED_IDLE" || bad "LIMITED_IDLE" "rc=$rc err=$err"
 
-# caps: the slice gets 65% of MemTotal, the scope -m GB, no swap; OMP_WAIT_POLICY defaults to PASSIVE, a caller's value wins
+# caps: claude-limited.slice gets 65% of MemTotal, the scope -m GB, no swap; OMP_WAIT_POLICY defaults to PASSIVE, a caller's value wins
 gb=$(awk '$1 == "MemTotal:" { print int($2 * 0.65 / 1048576) }' /proc/meminfo)
-out=$("$L" -m 3 -- sh -c 'c=/sys/fs/cgroup$(sed -n "s/^0:://p" /proc/self/cgroup); cat $c/memory.max $c/memory.swap.max $c/../memory.max; echo $OMP_WAIT_POLICY')
-[[ $out == "$((3 << 30))"$'\n'0$'\n'"$((gb << 30))"$'\n'PASSIVE ]] && ok "caps" || bad "caps" "out=$out gb=$gb"
+out=$("$L" -m 3 -- sh -c 'c=/sys/fs/cgroup$(sed -n "s/^0:://p" /proc/self/cgroup); cat $c/memory.max $c/memory.swap.max $c/../memory.max; basename $(dirname $c); echo $OMP_WAIT_POLICY')
+[[ $out == "$((3 << 30))"$'\n'0$'\n'"$((gb << 30))"$'\n'claude-limited.slice$'\n'PASSIVE ]] && ok "caps" || bad "caps" "out=$out gb=$gb"
 out=$(OMP_WAIT_POLICY=ACTIVE "$L" -- printenv OMP_WAIT_POLICY)
 [[ $out == ACTIVE ]] && ok "caller OMP_WAIT_POLICY kept" || bad "caller OMP_WAIT_POLICY kept" "out=$out"
 

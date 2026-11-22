@@ -16,7 +16,7 @@
 # the job used < CORES (stalled) or at least a quarter of the machine's cores sat idle (the job could use more).
 # Both kills stop the scope, print "limited: killed: <reason>" on stderr and exit 124. Sampling every
 # LIMITED_SAMPLE_S (10) s.
-# All jobs run in limited.slice; each launch sets its caps at runtime (MemoryMax 65% of MemTotal, no swap,
+# All jobs run in claude-limited.slice; each launch sets its caps at runtime (MemoryMax 65% of MemTotal, no swap,
 # CPUWeight 50, no MemoryHigh), so no unit file is needed. A scope gets the same memory cap with no swap, all cores
 # but 2, and choom -n 1000 (inherited by every descendant): the kernel OOM killer takes a limited job before anything
 # else. No MemoryHigh: without swap it throttles every job into an endless stall below MemoryMax instead of killing
@@ -77,11 +77,11 @@ done
 [[ $idle == 0 ]] || { secs "$idle" >/dev/null && [[ $idle != infinity ]]; } || { echo "limited: -i (or LIMITED_IDLE) needs a duration or 0" >&2; exit 2; }
 [[ ${1:-} == -- ]] && shift
 [[ $# -gt 0 ]] || { echo "usage: limited [-m GB] [-t DURATION] [-i DURATION] [-c CORES] [--] cmd args..." >&2; exit 2; }
-systemctl --user set-property --runtime limited.slice MemoryMax="${total}G" MemoryHigh=infinity MemorySwapMax=0 CPUWeight=50
+systemctl --user set-property --runtime claude-limited.slice MemoryMax="${total}G" MemoryHigh=infinity MemorySwapMax=0 CPUWeight=50
 sample=${LIMITED_SAMPLE_S:-10}
 [[ $idle == 0 ]] && iwin=0 || iwin=$(secs "$idle")
 unit=limited-$$-$RANDOM
-cg=/sys/fs/cgroup$(systemctl --user show limited.slice -p ControlGroup --value)/$unit.scope
+cg=/sys/fs/cgroup$(systemctl --user show claude-limited.slice -p ControlGroup --value)/$unit.scope
 mkdir -p "$state"
 rt=$(secs "$runtime"); (( rt < 0 )) && echo -1 > "$state/$unit.deadline" || echo $((EPOCHSECONDS + rt)) > "$state/$unit.deadline"
 
@@ -132,7 +132,7 @@ watch() {
 }
 
 export OMP_WAIT_POLICY=${OMP_WAIT_POLICY:-PASSIVE}
-systemd-run --user --scope --quiet --collect --expand-environment=no --slice=limited.slice --unit="$unit" \
+systemd-run --user --scope --quiet --collect --expand-environment=no --slice=claude-limited.slice --unit="$unit" \
   -p MemoryMax="${max}G" -p MemorySwapMax=0 -p OOMPolicy=kill -p CPUQuota=$(( (ncpu > 3 ? ncpu - 2 : 1) * 100 ))% \
   -p CPUWeight=50 -p TasksMax=2048 -- choom -n 1000 -- "$@" <&0 &
 job=$!
