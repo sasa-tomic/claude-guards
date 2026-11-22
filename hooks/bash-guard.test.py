@@ -12,12 +12,12 @@ SYSTEMD_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 
 class BashGuard(unittest.TestCase):
-    def check(self, want, message, cases, background=False):
+    def check(self, want, message, cases, background=False, env=None):
         for command in cases:
             with self.subTest(command=command):
                 hook_input = json.dumps({"tool_input": {"command": command, "run_in_background": background}})
                 run = subprocess.run([sys.executable, "-I", HOOK], input=hook_input, text=True, capture_output=True,
-                                     env={**os.environ, "PATH": SYSTEMD_PATH})
+                                     env={**os.environ, "PATH": SYSTEMD_PATH, **(env or {})})
                 self.assertEqual(run.returncode, want, run.stderr)
                 self.assertIn(message, run.stderr)
 
@@ -57,6 +57,20 @@ class BashGuard(unittest.TestCase):
 
     def test_refuses_command_shfmt_cannot_parse(self):
         self.check(2, "cannot parse", ["echo $(", "ssh h 'echo $('"])
+
+    def test_refuses_heavy_job_without_limited(self):
+        self.check(2, "under `limited`", [
+            ".venv/bin/python -m pytest tests/", "cd x && pytest -x", "uv run pytest", "timeout 60 py.test",
+            "cargo +nightly test --release", "cargo build", "bash -c 'cargo nextest run'", "FOO=1 python3 -u -m pytest",
+        ])
+
+    def test_allows_heavy_job_under_limited_light_commands_and_remote_jobs(self):
+        self.check(0, "", ["limited -m 8 -- pytest -x", "cd x && ~/bin/limited -t 2h -- cargo test", "cargo fmt",
+                           "python -m pip install pytest", "grep -r pytest .", "echo cargo test",
+                           "ssh h 'cd /x && pytest'", "uv run limited -- pytest"])
+
+    def test_heavy_job_allowed_where_limited_cannot_run(self):
+        self.check(0, "", ["pytest -x", "cargo test"], env={"XDG_RUNTIME_DIR": "/nonexistent"})
 
 
 if __name__ == "__main__":

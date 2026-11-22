@@ -3,11 +3,14 @@
   ends, outlives the call, so Claude Code sends no completion notice and the session never learns the job ended.
 - Self-matching pgrep: `pgrep -f`/`pkill -f` also matches the calling shell, whose command line holds the pattern, so a
   wait on it never ends and a pkill kills the caller. `-A` (--ignore-ancestors) excludes the caller.
-Literal code given to bash/sh -c, eval and ssh is checked the same way. A command shfmt cannot parse is refused.
+- Uncapped heavy job: pytest or cargo test/build/bench not run under `limited` (bin/limited) can take all memory and
+  freeze the machine. Checked only where limited can run: Linux with cgroup v2 and a systemd user manager.
+Literal code given to bash/sh -c, eval and ssh is checked the same way (ssh code runs elsewhere: no limited check). A command shfmt cannot parse is refused.
 Registered as `python3 -I <this> || exit 2`: any error refuses the call.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -19,6 +22,8 @@ PGREP_ARG_SHORT = set("dgGOPstuUFrq")
 PGREP_ARG_LONG = {"delimiter", "pgroup", "group", "older", "parent", "session", "signal", "terminal", "euid", "uid",
                   "pidfile", "runstates", "cgroup", "ns", "nslist", "queue"}
 SSH_ARG_SHORT = set("BbcDEeFIiJLlmOoPpQRSWw")
+PREFIXES = {"env", "nice", "ionice", "time", "timeout", "stdbuf", "exec", "uv", "poetry", "pipenv", "run"}
+CARGO_HEAVY = {"test", "build", "bench", "nextest"}
 NEW_SHELL = {"Subshell", "CmdSubst", "ProcSubst"}
 PIPE = 12  # shfmt BinaryCmd.Op of `|`: each side runs in its own subshell
 DETACHED = """Bash refused: this detaches a job, so no completion notice ever arrives.
@@ -29,6 +34,12 @@ DETACHED = """Bash refused: this detaches a job, so no completion notice ever ar
   remote: ssh HOST 'setsid -w nohup JOB >LOG 2>&1 </dev/null & wait $!; tail -20 LOG'"""
 SELF_MATCH = """Bash refused: `pgrep -f`/`pkill -f` without -A also matches the calling shell, whose command line holds the
 pattern: a wait on it never ends, a pkill kills the caller. Add -A (--ignore-ancestors), e.g. `pgrep -Af PATTERN`."""
+
+UNCAPPED = """Bash refused: pytest and cargo test/build/bench run under `limited`, which caps memory and CPU so a runaway
+job is killed instead of freezing the machine: `limited [-m GB] [-t DURATION] -- COMMAND` (options: head of
+the limited script, `command -v limited`)."""
+CAN_LIMIT = (sys.platform == "linux" and os.path.exists("/sys/fs/cgroup/cgroup.controllers")
+             and os.path.exists(os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/nonexistent"), "systemd/private")))
 
 
 class Unparsable(Exception):
@@ -80,6 +91,25 @@ def self_matching(args):
     return full and not ancestors
 
 
+def uncapped(args):
+    """args start a heavy job (pytest, python -m pytest, cargo test/build/bench) that no `limited` in front caps."""
+    i = 0
+    while i < len(args) and (args[i] is None or os.path.basename(args[i]) in PREFIXES or args[i][:1] in "-+"
+                             or "=" in args[i] or re.fullmatch(r"[\d.]+[smhd]?", args[i])):
+        i += 1
+    if i == len(args):
+        return False
+    cmd, rest = os.path.basename(args[i]), args[i + 1:]
+    if cmd == "limited":
+        return False
+    if cmd in ("pytest", "py.test"):
+        return True
+    if re.fullmatch(r"python[\d.]*", cmd):
+        return "pytest" in (rest[rest.index("-m") + 1:rest.index("-m") + 2] if "-m" in rest else [])
+    words = [a for a in rest if a and a[0] not in "-+"]
+    return cmd == "cargo" and bool(words) and words[0] in CARGO_HEAVY
+
+
 def nested_script(cmd, args):
     """Literal code cmd hands to another shell: bash -c CODE, eval CODE..., ssh [OPTS] HOST CODE..."""
     if cmd in SHELLS:
@@ -96,7 +126,7 @@ def nested_script(cmd, args):
     return " ".join(a for a in args if a) or None
 
 
-def check(tree, background, refusals):
+def check(tree, background, refusals, local=True):
     jobs, enders = [], []  # (shell, offset) of each `&` statement's end and of each wait/kill
 
     def walk(node, shell):
@@ -119,9 +149,11 @@ def check(tree, background, refusals):
                 refusals.add(DETACHED)
             if cmd in PGREP and self_matching(args[1:]):
                 refusals.add(SELF_MATCH)
+            if local and CAN_LIMIT and uncapped(args):
+                refusals.add(UNCAPPED)
             nested = nested_script(cmd, args[1:])
             if nested:
-                check(parse(nested), background, refusals)
+                check(parse(nested), background, refusals, local and cmd != "ssh")
         if node.get("Type") == "BinaryCmd" and node["Op"] == PIPE:
             walk(node["X"], id(node["X"]))
             walk(node["Y"], id(node["Y"]))
