@@ -4,12 +4,14 @@
 - Self-matching pgrep: `pgrep -f`/`pkill -f` also matches the calling shell, whose command line holds the pattern, so a
   wait on it never ends and a pkill kills the caller. `-A` (--ignore-ancestors) excludes the caller.
 - Uncapped heavy job: pytest or cargo test/build/bench not run under `limited` (bin/limited) can take all memory and
-  freeze the machine. Checked only where limited can run: Linux with cgroup v2 and a systemd user manager.
+  freeze the machine. Checked only where limited can run (Linux with cgroup v2 and a systemd user manager) and the session is not
+  already in a memory-capped unit (capped()).
 Literal code given to bash/sh -c, eval and ssh is checked the same way (ssh code runs elsewhere: no limited check). A command shfmt cannot parse is refused.
 Registered as `python3 -I <this> || exit 2`: any error refuses the call.
 """
 import json
 import os
+import pathlib
 import re
 import subprocess
 import sys
@@ -40,6 +42,13 @@ job is killed instead of freezing the machine: `limited [-m GB] [-t DURATION] --
 the limited script, `command -v limited`)."""
 CAN_LIMIT = (sys.platform == "linux" and os.path.exists("/sys/fs/cgroup/cgroup.controllers")
              and os.path.exists(os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/nonexistent"), "systemd/private")))
+
+
+def capped():
+    """The session runs in a cgroup with a memory cap of its own (a systemd unit with MemoryMax, e.g. a patrol), which
+    already caps every job it starts. Only the leaf counts: the user slice above interactive sessions may be capped."""
+    cgroup = pathlib.Path("/proc/self/cgroup").read_text().split("::", 1)[1].strip()
+    return pathlib.Path(f"/sys/fs/cgroup{cgroup}/memory.max").read_text().strip() != "max"
 
 
 class Unparsable(Exception):
@@ -149,7 +158,7 @@ def check(tree, background, refusals, local=True):
                 refusals.add(DETACHED)
             if cmd in PGREP and self_matching(args[1:]):
                 refusals.add(SELF_MATCH)
-            if local and CAN_LIMIT and uncapped(args):
+            if local and CAN_LIMIT and uncapped(args) and not capped():
                 refusals.add(UNCAPPED)
             nested = nested_script(cmd, args[1:])
             if nested:

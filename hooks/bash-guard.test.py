@@ -12,12 +12,15 @@ SYSTEMD_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 
 class BashGuard(unittest.TestCase):
-    def check(self, want, message, cases, background=False, env=None):
+    def check(self, want, message, cases, background=False, env=None, cap="infinity"):
+        """The hook in a systemd unit of its own with memory cap CAP, so a capped test runner does not leak in."""
+        env = {"PATH": SYSTEMD_PATH, "XDG_RUNTIME_DIR": os.environ["XDG_RUNTIME_DIR"], **(env or {})}
         for command in cases:
             with self.subTest(command=command):
                 hook_input = json.dumps({"tool_input": {"command": command, "run_in_background": background}})
-                run = subprocess.run([sys.executable, "-I", HOOK], input=hook_input, text=True, capture_output=True,
-                                     env={**os.environ, "PATH": SYSTEMD_PATH, **(env or {})})
+                run = subprocess.run(["systemd-run", "--user", "--pipe", "--wait", "--quiet", f"-pMemoryMax={cap}",
+                                      *(f"-E{k}={v}" for k, v in env.items()), sys.executable, "-I", HOOK],
+                                     input=hook_input, text=True, capture_output=True)
                 self.assertEqual(run.returncode, want, run.stderr)
                 self.assertIn(message, run.stderr)
 
@@ -71,6 +74,9 @@ class BashGuard(unittest.TestCase):
 
     def test_heavy_job_allowed_where_limited_cannot_run(self):
         self.check(0, "", ["pytest -x", "cargo test"], env={"XDG_RUNTIME_DIR": "/nonexistent"})
+
+    def test_heavy_job_allowed_in_a_memory_capped_unit(self):
+        self.check(0, "", ["pytest -x", "cargo test"], cap="1G")
 
 
 if __name__ == "__main__":
